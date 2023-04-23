@@ -88,7 +88,7 @@ func start(w http.ResponseWriter, req *http.Request) {
 	values.Add("code_challenge", oauth.code_challenge)
 
 	// 認可エンドポイントにリダイレクト
-	http.Redirect(w, req, authEndpoint+values.Encode(), 302)
+	http.Redirect(w, req, authEndpoint+values.Encode(), http.StatusFound)
 }
 
 // 認可してからcallbackするところ
