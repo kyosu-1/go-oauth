@@ -1,7 +1,6 @@
 package main
 
 import (
-
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -11,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-
 )
 
 const (
