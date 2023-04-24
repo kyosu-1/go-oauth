@@ -1,192 +1,151 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/base64"
+	"context"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io/ioutil"
 	"log"
 	"net/http"
-	"net/url"
-	"strings"
+	"time"
+
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	"google.golang.org/api/calendar/v3"
 )
 
-const (
-	response_type = "code"
-	redirect_uri  = "http://localhost:8080/callback"
-	grant_type    = "authorization_code"
+// CredentialFile は、Google API Console からダウンロードした OAuth クライアントID JSON ファイルのパスです
+const CredentialFile = "client_secret.json"
 
-	// https://tex2e.github.io/rfc-translater/html/rfc7636.html
-	// 付録B. S256 code_challenge_methodの例 "
-	verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
-)
-
-var secrets map[string]interface{}
-
-var oauth struct {
-	clientId              string
-	clientSecret          string
-	scope                 string
-	state                 string
-	code_challenge_method string
-	code_challenge        string
-	authEndpoint          string
-	tokenEndpoint         string
-}
-
-func readJson() {
-
-	data, err := ioutil.ReadFile("client_secret.json")
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	json.Unmarshal(data, &secrets)
-	return
-}
-
-func setUp() {
-
-	readJson()
-
-	oauth.clientId = secrets["web"].(map[string]interface{})["client_id"].(string)
-	oauth.clientSecret = secrets["web"].(map[string]interface{})["client_secret"].(string)
-	oauth.authEndpoint = "https://accounts.google.com/o/oauth2/v2/auth?"
-	oauth.tokenEndpoint = "https://www.googleapis.com/oauth2/v4/token"
-	oauth.state = "xyz"
-	oauth.scope = "https://www.googleapis.com/auth/photoslibrary.readonly"
-	oauth.code_challenge_method = "S256"
-
-	// PKCE用に"dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"をSHA256+Base64URLエンコードしたものをセット
-	oauth.code_challenge = base64URLEncode()
-
-}
-
-// https://auth0.com/docs/authorization/flows/call-your-api-using-the-authorization-code-flow-with-pkce#javascript-sample
-func base64URLEncode() string {
-	hash := sha256.Sum256([]byte(verifier))
-	return base64.RawURLEncoding.EncodeToString(hash[:])
-}
-
-// Googleの認可エンドポイントにリダイレクトさせる
-func start(w http.ResponseWriter, req *http.Request) {
-
-	authEndpoint := oauth.authEndpoint
-
-	values := url.Values{}
-	values.Add("response_type", response_type)
-	values.Add("client_id", oauth.clientId)
-	values.Add("state", oauth.state)
-	values.Add("scope", oauth.scope)
-	values.Add("redirect_uri", redirect_uri)
-
-	// PKCE用パラメータ
-	values.Add("code_challenge_method", oauth.code_challenge_method)
-	values.Add("code_challenge", oauth.code_challenge)
-
-	// 認可エンドポイントにリダイレクト
-	http.Redirect(w, req, authEndpoint+values.Encode(), http.StatusFound)
-}
-
-// 認可してからcallbackするところ
-func callback(w http.ResponseWriter, req *http.Request) {
-
-	//クエリを取得
-	query := req.URL.Query()
-
-	// トークンをリクエストする
-	result, err := tokenRequest(query)
-	if err != nil {
-		log.Println(err)
-	}
-	// トークンレスポンスのjsonからトークンだけ抜き出しリソースにリクエストを送る
-	body, err := apiRequest(req, result["access_token"].(string))
-	if err != nil {
-		log.Println(err)
-	}
-	w.Write(body)
-
-}
-
-// 認可コードを使ってトークンリクエストをエンドポイントに送る
-func tokenRequest(query url.Values) (map[string]interface{}, error) {
-
-	tokenEndpoint := oauth.tokenEndpoint
-	values := url.Values{}
-	values.Add("client_id", oauth.clientId)
-	values.Add("client_secret", oauth.clientSecret)
-	values.Add("grant_type", grant_type)
-
-	// 取得した認可コードをトークンのリクエストにセット
-	values.Add("code", query.Get("code"))
-	values.Add("redirect_uri", redirect_uri)
-
-	// PKCE用パラメータ
-	values.Add("code_verifier", verifier)
-
-	req, err := http.NewRequest("POST", tokenEndpoint, strings.NewReader(values.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Printf("request err: %s", err)
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	log.Printf("token response : %s", string(body))
-	var data map[string]interface{}
-	json.Unmarshal(body, &data)
-
-	return data, nil
-}
-
-// 取得したトークンを利用してリソースにアクセス
-func apiRequest(req *http.Request, token string) ([]byte, error) {
-
-	photoAPI := "https://photoslibrary.googleapis.com/v1/mediaItems"
-
-	req, err := http.NewRequest("GET", photoAPI, nil)
-	if err != nil {
-		return nil, err
-	}
-	// 取得したアクセストークンをHeaderにセットしてリソースサーバにリクエストを送る
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil || resp.StatusCode != 200 {
-		log.Printf("http status code is %d, err: %s", resp.StatusCode, err)
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Println(err)
-		return nil, err
-	}
-
-	return body, nil
-
-}
+const htmlTemplate = `
+<!DOCTYPE html>
+<html>
+<head>
+	<title>Google Calendar Events</title>
+</head>
+<body>
+	<h1>Events</h1>
+	{{range .}}
+		<h3>{{.Summary}}</h3>
+		<p>{{.Start.DateTime}}</p>
+	{{else}}
+		<p>No events.</p>
+	{{end}}
+</body>
+</html>
+`
 
 func main() {
+	ctx := context.Background()
 
-	setUp()
-	http.HandleFunc("/start", start)
-	http.HandleFunc("/callback", callback)
-	log.Println("start server localhost:8080...")
-	err := http.ListenAndServe("localhost:8080", nil)
+	// クレデンシャルファイルから設定を読み込む
+	data, err := ioutil.ReadFile(CredentialFile)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Unable to read client secret file: %v", err)
 	}
 
+	// 認証情報を取得する
+	config, err := google.ConfigFromJSON(data, calendar.CalendarReadonlyScope)
+	if err != nil {
+		log.Fatalf("Unable to parse client secret file to config: %v", err)
+	}
+
+	client := getClient(ctx, config)
+
+	// Google Calendar API サービスを作成
+	srv, err := calendar.New(client)
+	if err != nil {
+		log.Fatalf("Unable to retrieve Calendar client: %v", err)
+	}
+
+	http.HandleFunc("/calendar", func(w http.ResponseWriter, r *http.Request) {
+
+		startDate := r.URL.Query().Get("start")
+		endDate := r.URL.Query().Get("end")
+
+		// クエリパラメータが設定されていない場合、デフォルトとして今日の日付を使用
+		if startDate == "" || endDate == "" {
+			t := time.Now()
+			startDate = t.Format("2006-01-02")
+			endDate = startDate
+		}
+
+		// 指定期間のイベントを取得
+		events, err := getEvents(ctx, srv, startDate, endDate)
+		if err != nil {
+			log.Printf("Error fetching events: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// HTML ページにイベント情報を埋め込む
+		tmpl := template.Must(template.New("events").Parse(htmlTemplate))
+		if err := tmpl.Execute(w, events); err != nil {
+			log.Printf("Error rendering template: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+	})
+
+	// OAuth2 認証フロー用のエンドポイント
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		url := config.AuthCodeURL("state", oauth2.AccessTypeOffline)
+		http.Redirect(w, r, url, http.StatusFound)
+	})
+
+	// OAuth2 コールバック用のエンドポイント
+	http.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
+		code := r.URL.Query().Get("code")
+		token, err := config.Exchange(ctx, code)
+		if err != nil {
+			log.Printf("Unable to exchange code for token: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		// トークンを保存
+		// ここは、DBやKVSなどに保存するのがよいかも
+		tokenJson, err := json.Marshal(token)
+		if err != nil {
+			log.Printf("Unable to marshal token to JSON: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		if err := ioutil.WriteFile("token.json", tokenJson, 0600); err != nil {
+			log.Printf("Unable to save token: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		http.Redirect(w, r, "/calendar", http.StatusFound)
+	})
+
+	log.Println("Server running on http://localhost:8080")
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+func getClient(ctx context.Context, config *oauth2.Config) *http.Client {
+	// 保存されたトークンを読み込む
+	token, err := ioutil.ReadFile("token.json")
+	if err == nil {
+		var t oauth2.Token
+		if err := json.Unmarshal(token, &t); err == nil {
+			return config.Client(ctx, &t)
+		}
+	}
+
+	return &http.Client{}
+}
+
+func getEvents(ctx context.Context, srv *calendar.Service, startDate, endDate string) ([]*calendar.Event, error) {
+	timeMin := startDate + "T00:00:00Z"
+	timeMax := endDate + "T23:59:59Z"
+
+	// 指定期間のイベントを取得
+	events, err := srv.Events.List("primary").TimeMin(timeMin).TimeMax(timeMax).SingleEvents(true).OrderBy("startTime").Do()
+	if err != nil {
+		return nil, fmt.Errorf("Unable to retrieve events: %v", err)
+	}
+
+	return events.Items, nil
 }
