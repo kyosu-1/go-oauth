@@ -22,3 +22,4 @@ go.work
 
 # secret
 client_secret.json
+token.json
