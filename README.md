@@ -25,3 +25,10 @@ go run main.go
 
 3. GoogleカレンダーAPIへのアクセス許可を与えると、指定された期間のイベントが表示されます。期間を指定するには、クエリパラメータ `start` と `end` を使用してください。例: `http://localhost:8080/calendar?start=2023-05-01&end=2023-05-31`
 
+## 認可フロー
+
+本アプリケーションは認可コードフロー（Authorization Code Flow）を採用している
+
+![](https://camo.qiitausercontent.com/cbceb0f0e391aeeb9220c484838d0c13e730c75d/68747470733a2f2f71696974612d696d6167652d73746f72652e73332e616d617a6f6e6177732e636f6d2f302f3130363034342f64393131396632312d373336642d643565642d393634642d3330363861663066636465392e706e67)
+
+[引用元](https://qiita.com/TakahikoKawasaki/items/200951e5b5929f840a1f)
