@@ -96,6 +96,7 @@ func main() {
 	// OAuth2 コールバック用のエンドポイント
 	http.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		code := r.URL.Query().Get("code")
+		// 認可コードをトークンに交換
 		token, err := config.Exchange(ctx, code)
 		if err != nil {
 			log.Printf("Unable to exchange code for token: %v", err)
